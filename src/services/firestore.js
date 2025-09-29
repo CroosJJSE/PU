@@ -246,20 +246,22 @@ import {
       if (docSnap.exists()) {
         const data = docSnap.data()
         const studentIds = data[date] || []
+        const studentTimes = data[`${date}_times`] || {}
         logSuccess(`Found ${studentIds.length} students present for class ${classId} on ${date}`)
-        return studentIds
+        return { studentIds, studentTimes }
       }
       
       logWarning(`No attendance record found for class ${classId} on ${date}`)
-      return []
+      return { studentIds: [], studentTimes: {} }
     },
   
-    async saveAttendance(classId, date, studentIds) {
+    async saveAttendance(classId, date, studentIds, studentTimes = {}) {
       try {
-        log(`Saving class attendance for class ${classId} on ${date}`, { studentIds })
+        log(`Saving class attendance for class ${classId} on ${date}`, { studentIds, studentTimes })
         const docRef = doc(db, DB_COLLECTIONS.CLASS_ATTENDANCE, classId)
         await setDoc(docRef, {
           [date]: studentIds,
+          [`${date}_times`]: studentTimes,
           updatedAt: serverTimestamp()
         }, { merge: true })
         
@@ -362,31 +364,70 @@ import {
   
   // Finance Service
   export const financeService = {
-    async getAllExpenses() {
+    async getAllTransactions() {
       log('Getting all financial transactions')
       return await firestoreService.getAll(DB_COLLECTIONS.EXPENSES)
     },
   
-    async getExpensesByType(type) {
+    async getExpenses() {
+      log('Getting expense transactions')
+      return await this.getTransactionsByType('expense')
+    },
+  
+    async getIncome() {
+      log('Getting income transactions')
+      return await this.getTransactionsByType('income')
+    },
+  
+    async getTransactionsByType(type) {
       log(`Getting ${type} transactions`)
-      const expenses = await firestoreService.getAll(DB_COLLECTIONS.EXPENSES)
-      const filteredExpenses = expenses.filter(expense => expense.type === type)
-      logSuccess(`Found ${filteredExpenses.length} ${type} transactions`)
-      return filteredExpenses
+      const transactions = await firestoreService.getAll(DB_COLLECTIONS.EXPENSES)
+      const filteredTransactions = transactions.filter(transaction => transaction.type === type)
+      logSuccess(`Found ${filteredTransactions.length} ${type} transactions`)
+      return filteredTransactions
+    },
+  
+    async createTransaction(transactionData) {
+      log('Creating new financial transaction', transactionData)
+      return await firestoreService.create(DB_COLLECTIONS.EXPENSES, transactionData)
     },
   
     async createExpense(expenseData) {
       log('Creating new expense', expenseData)
-      return await firestoreService.create(DB_COLLECTIONS.EXPENSES, expenseData)
+      const expense = { ...expenseData, type: 'expense' }
+      return await firestoreService.create(DB_COLLECTIONS.EXPENSES, expense)
+    },
+  
+    async createIncome(incomeData) {
+      log('Creating new income', incomeData)
+      const income = { ...incomeData, type: 'income' }
+      return await firestoreService.create(DB_COLLECTIONS.EXPENSES, income)
+    },
+  
+    async updateTransaction(id, transactionData) {
+      log(`Updating transaction ${id}`, transactionData)
+      return await firestoreService.update(DB_COLLECTIONS.EXPENSES, id, transactionData)
+    },
+  
+    async deleteTransaction(id) {
+      log(`Deleting transaction ${id}`)
+      return await firestoreService.delete(DB_COLLECTIONS.EXPENSES, id)
+    },
+  
+    // Legacy methods for backward compatibility
+    async getAllExpenses() {
+      return await this.getAllTransactions()
+    },
+  
+    async getExpensesByType(type) {
+      return await this.getTransactionsByType(type)
     },
   
     async updateExpense(id, expenseData) {
-      log(`Updating expense ${id}`, expenseData)
-      return await firestoreService.update(DB_COLLECTIONS.EXPENSES, id, expenseData)
+      return await this.updateTransaction(id, expenseData)
     },
   
     async deleteExpense(id) {
-      log(`Deleting expense ${id}`)
-      return await firestoreService.delete(DB_COLLECTIONS.EXPENSES, id)
+      return await this.deleteTransaction(id)
     }
   }

@@ -48,7 +48,8 @@ export const DB_FIELDS = {
   
   // Class Attendance fields (classId as document ID)
   CLASS_ATTENDANCE: {
-    STUDENT_IDS: 'studentIds' // Array of student IDs for the date
+    STUDENT_IDS: 'studentIds', // Array of student IDs for the date
+    STUDENT_TIMES: 'studentTimes' // Map of studentId -> {time, status}
   },
   
   // Exam fields
@@ -61,11 +62,19 @@ export const DB_FIELDS = {
     TOTAL_INCOME: 'totalIncome',
     COLLECTED_MONEY: 'collectedMoney', // Sum of fees from studentRecords
     COMPLETED_AT: 'completedAt',
-    STUDENT_RECORDS: 'studentRecords' // Map of studentId -> {fee, mark}
+    STUDENT_RECORDS: 'studentRecords' // Map of studentId -> {fee, mark, status, mcqData}
   },
   
   // Expense fields
   EXPENSE: {
+    AMOUNT: 'amount',
+    REASON: 'reason',
+    DATE: 'date',
+    TYPE: 'type'
+  },
+  
+  // Income fields (same as expense but with type 'income')
+  INCOME: {
     AMOUNT: 'amount',
     REASON: 'reason',
     DATE: 'date',
@@ -106,6 +115,18 @@ export const CONSTANTS = {
     UPCOMING: 'upcoming',
     ACTIVE: 'active',
     COMPLETED: 'completed'
+  },
+  
+  STUDENT_EXAM_STATUS: {
+    PRESENT: 'present',
+    ABSENT: 'absent'
+  },
+  
+  MARK_RANGES: {
+    RED: { min: 0, max: 25, color: '#dc3545' },
+    ORANGE: { min: 25, max: 50, color: '#fd7e14' },
+    YELLOW: { min: 50, max: 75, color: '#ffc107' },
+    GREEN: { min: 75, max: 100, color: '#28a745' }
   },
   
   EXPENSE_TYPES: {

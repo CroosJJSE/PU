@@ -8,10 +8,16 @@
             <h1><i class="fas fa-chart-line"></i> Finance Management</h1>
             <p>Track income, expenses, and financial balance</p>
           </div>
-          <button @click="showAddExpenseModal = true" class="btn btn-primary">
-            <i class="fas fa-plus"></i>
-            Add Expense
-          </button>
+          <div class="header-actions">
+            <button @click="showAddIncomeModal = true" class="btn btn-success">
+              <i class="fas fa-plus"></i>
+              Add Income
+            </button>
+            <button @click="showAddExpenseModal = true" class="btn btn-primary">
+              <i class="fas fa-plus"></i>
+              Add Expense
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -158,6 +164,62 @@
       </div>
     </div>
 
+    <!-- Add/Edit Income Modal -->
+    <div v-if="showAddIncomeModal || showEditIncomeModal" class="modal-overlay" @click="closeModal">
+      <div class="modal" @click.stop>
+        <div class="modal-header">
+          <h3 class="modal-title">{{ showAddIncomeModal ? 'Add New Income' : 'Edit Income' }}</h3>
+          <button @click="closeModal" class="modal-close">
+            <i class="fas fa-times"></i>
+          </button>
+        </div>
+        
+        <form @submit.prevent="saveIncome" class="modal-body">
+          <div class="form-group">
+            <label class="form-label">Amount (Rs.) *</label>
+            <input
+              v-model.number="incomeForm.amount"
+              type="number"
+              class="form-control"
+              placeholder="Enter amount"
+              min="0"
+              step="0.01"
+              required
+            />
+          </div>
+          
+          <div class="form-group">
+            <label class="form-label">Reason/Description *</label>
+            <textarea
+              v-model="incomeForm.reason"
+              class="form-control"
+              placeholder="Enter reason for income"
+              rows="3"
+              required
+            ></textarea>
+          </div>
+          
+          <div class="form-group">
+            <label class="form-label">Date *</label>
+            <input
+              v-model="incomeForm.date"
+              type="date"
+              class="form-control"
+              required
+            />
+          </div>
+        </form>
+        
+        <div class="modal-footer">
+          <button type="button" @click="closeModal" class="btn btn-secondary">Cancel</button>
+          <button type="submit" @click="saveIncome" class="btn btn-success" :disabled="saving">
+            <span v-if="saving" class="spinner"></span>
+            <span v-else>{{ showAddIncomeModal ? 'Add Income' : 'Update Income' }}</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- Add/Edit Expense Modal -->
     <div v-if="showAddExpenseModal || showEditExpenseModal" class="modal-overlay" @click="closeModal">
       <div class="modal" @click.stop>
@@ -278,9 +340,16 @@ export default {
       transactions: [],
       loading: true,
       activeTab: 'income',
+      showAddIncomeModal: false,
+      showEditIncomeModal: false,
       showAddExpenseModal: false,
       showEditExpenseModal: false,
       saving: false,
+      incomeForm: {
+        amount: '',
+        reason: '',
+        date: getTodayDate()
+      },
       expenseForm: {
         amount: '',
         reason: '',
@@ -347,6 +416,16 @@ export default {
       }
     },
     
+    editIncome(income) {
+      this.editingIncome = income
+      this.incomeForm = {
+        amount: income.amount,
+        reason: income.reason,
+        date: income.date.toDate ? income.date.toDate().toISOString().split('T')[0] : income.date
+      }
+      this.showEditIncomeModal = true
+    },
+    
     editExpense(expense) {
       this.editingExpense = expense
       this.expenseForm = {
@@ -355,6 +434,45 @@ export default {
         date: expense.date.toDate ? expense.date.toDate().toISOString().split('T')[0] : expense.date
       }
       this.showEditExpenseModal = true
+    },
+    
+    async saveIncome() {
+      try {
+        this.saving = true
+        log('Saving income data', this.incomeForm)
+        
+        if (!this.incomeForm.amount || !this.incomeForm.reason || !this.incomeForm.date) {
+          logWarning('Form validation failed - missing required fields')
+          this.showToast('Please fill in all required fields', 'error')
+          return
+        }
+        
+        const incomeData = {
+          amount: parseFloat(this.incomeForm.amount),
+          reason: this.incomeForm.reason.trim(),
+          date: new Date(this.incomeForm.date),
+          type: CONSTANTS.EXPENSE_TYPES.INCOME
+        }
+        
+        if (this.showAddIncomeModal) {
+          await financeService.createIncome(incomeData)
+          logSuccess(`Income created successfully: Rs. ${incomeData.amount}`)
+          this.showToast('Income added successfully', 'success')
+        } else {
+          await financeService.updateTransaction(this.editingIncome.id, incomeData)
+          logSuccess(`Income updated successfully: Rs. ${incomeData.amount}`)
+          this.showToast('Income updated successfully', 'success')
+        }
+        
+        this.closeModal()
+        await this.loadTransactions()
+        
+      } catch (error) {
+        logError('Error saving income', error)
+        this.showToast('Failed to save income', 'error')
+      } finally {
+        this.saving = false
+      }
     },
     
     async saveExpense() {
@@ -380,7 +498,7 @@ export default {
           logSuccess(`Expense created successfully: Rs. ${expenseData.amount}`)
           this.showToast('Expense added successfully', 'success')
         } else {
-          await financeService.updateExpense(this.editingExpense.id, expenseData)
+          await financeService.updateTransaction(this.editingExpense.id, expenseData)
           logSuccess(`Expense updated successfully: Rs. ${expenseData.amount}`)
           this.showToast('Expense updated successfully', 'success')
         }
@@ -414,9 +532,17 @@ export default {
     },
     
     closeModal() {
+      this.showAddIncomeModal = false
+      this.showEditIncomeModal = false
       this.showAddExpenseModal = false
       this.showEditExpenseModal = false
+      this.editingIncome = null
       this.editingExpense = null
+      this.incomeForm = {
+        amount: '',
+        reason: '',
+        date: getTodayDate()
+      }
       this.expenseForm = {
         amount: '',
         reason: '',
@@ -487,6 +613,31 @@ export default {
 .header-left p {
   color: #6c757d;
   margin: 0;
+}
+
+.header-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.btn-success {
+  background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+  color: white;
+  border: none;
+  padding: 12px 20px;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.btn-success:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(40, 167, 69, 0.3);
 }
 
 .finance-summary {

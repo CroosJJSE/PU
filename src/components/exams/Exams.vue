@@ -197,12 +197,10 @@
             <label class="form-label">Subject *</label>
             <select v-model="examForm.subject" class="form-control" required>
               <option value="">Select Subject</option>
-              <option value="Mathematics">Mathematics</option>
-              <option value="Biology">Biology</option>
-              <option value="Physics">Physics</option>
-              <option value="Chemistry">Chemistry</option>
-              <option value="English">English</option>
-              <option value="Sinhala">Sinhala</option>
+              <option value="Mathematics">Mathematics (MATH stream only)</option>
+              <option value="Biology">Biology (BIO stream only)</option>
+              <option value="Physics">Physics (Both streams)</option>
+              <option value="Chemistry">Chemistry (Both streams)</option>
             </select>
           </div>
           
@@ -307,13 +305,23 @@
                 
                 <div v-if="student.attended" class="fee-input">
                   <label>Fee Paid:</label>
-                  <input
-                    v-model.number="student.feePaid"
-                    type="number"
-                    class="form-control form-control-sm"
-                    :placeholder="selectedExam?.fee"
-                    min="0"
-                  />
+                  <div class="fee-input-group">
+                    <input
+                      v-model.number="student.feePaid"
+                      type="number"
+                      class="form-control form-control-sm"
+                      :placeholder="selectedExam?.fee"
+                      min="0"
+                    />
+                    <button 
+                      @click="markForgotToBring(student)" 
+                      class="btn btn-warning btn-sm"
+                      title="Student forgot to bring money"
+                    >
+                      <i class="fas fa-exclamation-triangle"></i>
+                      Forgot
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -345,7 +353,28 @@
         
         <div class="modal-body">
           <div class="marks-instructions">
-            <p><i class="fas fa-info-circle"></i> Enter marks for students who attended the exam. Leave blank for absent students.</p>
+            <p><i class="fas fa-info-circle"></i> Enter marks for students who attended the exam.</p>
+          </div>
+          
+          <!-- MCQ Assist Section -->
+          <div class="mcq-assist-section">
+            <button @click="toggleMcqAssist" class="btn btn-info btn-sm">
+              <i class="fas fa-calculator"></i>
+              MCQ Assist
+            </button>
+            
+            <div v-if="showMcqAssist" class="mcq-assist-form">
+              <div class="form-group">
+                <label>Total MCQ Questions:</label>
+                <input
+                  v-model.number="totalMcqQuestions"
+                  type="number"
+                  class="form-control"
+                  min="1"
+                  placeholder="Enter total MCQ count"
+                />
+              </div>
+            </div>
           </div>
           
           <div class="marks-table-container">
@@ -353,7 +382,9 @@
               <div class="marks-header">
                 <div class="marks-cell">Index</div>
                 <div class="marks-cell">Name</div>
+                <div v-if="showMcqAssist" class="marks-cell">✅MCQ</div>
                 <div class="marks-cell">Marks</div>
+                <div class="marks-cell">Grade</div>
               </div>
               
               <div 
@@ -363,15 +394,35 @@
               >
                 <div class="marks-cell">{{ student.indexNo }}</div>
                 <div class="marks-cell">{{ student.name }}</div>
+                <div v-if="showMcqAssist" class="marks-cell">
+                  <input
+                    v-model.number="student.mcqCorrect"
+                    type="number"
+                    class="mcq-input"
+                    :class="{ 'error': student.mcqCorrect > totalMcqQuestions }"
+                    min="0"
+                    :max="totalMcqQuestions"
+                    placeholder="0"
+                    @input="validateAndCalculateMcq(student)"
+                  />
+                  <div v-if="student.mcqCorrect > totalMcqQuestions" class="error-message">
+                    Max: {{ totalMcqQuestions }}
+                  </div>
+                </div>
                 <div class="marks-cell">
                   <input
                     v-model.number="student.mark"
                     type="number"
                     class="mark-input"
+                    :class="{ 'readonly': showMcqAssist && student.mcqCorrect !== null && student.mcqCorrect !== undefined }"
+                    :readonly="showMcqAssist && student.mcqCorrect !== null && student.mcqCorrect !== undefined"
                     min="0"
                     max="100"
                     placeholder="0"
                   />
+                </div>
+                <div class="marks-cell">
+                  <div class="grade-circle" :style="{ backgroundColor: getMarkColor(student.mark) }"></div>
                 </div>
               </div>
             </div>
@@ -448,6 +499,8 @@ export default {
       examToClose: null,
       examStudentsForMarks: [],
       editingExam: null,
+      showMcqAssist: false,
+      totalMcqQuestions: 0,
       sectionsExpanded: {
         upcoming: true,
         active: true,
@@ -570,17 +623,32 @@ export default {
         log(`Managing exam attendance for ${exam.subject} (${exam.batch})`)
         this.selectedExam = exam
         
-        // Load students for the exam batch
-        const students = await studentService.getByBatch(exam.batch)
-        logSuccess(`Found ${students.length} students for batch ${exam.batch}`)
+        // Load students for the exam batch and filter by stream/subject
+        const allStudents = await studentService.getByBatch(exam.batch)
+        log(`Found ${allStudents.length} students for batch ${exam.batch}`)
+        
+        // Filter students based on subject and stream
+        let students = []
+        if (exam.subject === 'Mathematics') {
+          students = allStudents.filter(student => student.stream === 'MATH')
+        } else if (exam.subject === 'Biology') {
+          students = allStudents.filter(student => student.stream === 'BIO')
+        } else if (exam.subject === 'Physics' || exam.subject === 'Chemistry') {
+          students = allStudents // Both streams
+        } else {
+          students = allStudents // Fallback
+        }
+        
+        logSuccess(`Filtered to ${students.length} students for ${exam.subject} exam`)
         
         // Initialize attendance data using new structure
         this.examStudents = students.map(student => {
           const existingRecord = exam.studentRecords?.[student.indexNo]
           return {
             ...student,
-            attended: existingRecord ? true : false,
-            feePaid: existingRecord ? existingRecord.fee : exam.fee
+            attended: existingRecord ? existingRecord.status === CONSTANTS.STUDENT_EXAM_STATUS.PRESENT : false,
+            feePaid: existingRecord ? existingRecord.fee : exam.fee,
+            examStatus: existingRecord ? existingRecord.status : CONSTANTS.STUDENT_EXAM_STATUS.ABSENT
           }
         })
         
@@ -604,9 +672,17 @@ export default {
       student.attended = !student.attended
       if (!student.attended) {
         student.feePaid = 0
+        student.examStatus = CONSTANTS.STUDENT_EXAM_STATUS.ABSENT
       } else {
         student.feePaid = this.selectedExam.fee
+        student.examStatus = CONSTANTS.STUDENT_EXAM_STATUS.PRESENT
       }
+    },
+    
+    markForgotToBring(student) {
+      student.feePaid = 0
+      log(`Marked ${student.name} as forgot to bring money`)
+      this.showToast(`${student.name} marked as forgot to bring money`, 'warning')
     },
     
     async saveExamAttendance() {
@@ -619,19 +695,23 @@ export default {
         let totalIncome = 0
         
         this.examStudents.forEach(student => {
+          const fee = student.feePaid || 0 // Use actual fee paid, default to 0 if not specified
+          studentRecords[student.indexNo] = {
+            fee: fee,
+            mark: null, // Will be filled later when marks are added
+            status: student.examStatus || CONSTANTS.STUDENT_EXAM_STATUS.ABSENT,
+            mcqData: null // Will be filled if MCQ assist is used
+          }
+          
           if (student.attended) {
-            const fee = student.feePaid || this.selectedExam.fee
-            studentRecords[student.indexNo] = {
-              fee: fee,
-              mark: null // Will be filled later when marks are added
-            }
             totalIncome += fee
             
             // Add exam record to student document
             studentService.addExamRecord(student.indexNo, this.selectedExam.id, {
               fee: fee,
               mark: null,
-              examDate: this.selectedExam.date
+              examDate: this.selectedExam.date,
+              status: student.examStatus
             })
           }
         })
@@ -680,10 +760,10 @@ export default {
         // Get all students for this batch
         const students = await studentService.getByBatch(exam.batch)
         
-        // Filter students who attended the exam
+        // Filter students who attended the exam (present status)
         this.examStudentsForMarks = students.filter(student => {
           const examRecord = exam.studentRecords?.[student.indexNo]
-          return examRecord && examRecord.fee !== null && examRecord.fee !== undefined
+          return examRecord && examRecord.status === CONSTANTS.STUDENT_EXAM_STATUS.PRESENT
         })
         
         // Initialize marks data
@@ -692,7 +772,8 @@ export default {
           return {
             ...student,
             mark: examRecord.mark || null,
-            fee: examRecord.fee
+            fee: examRecord.fee,
+            mcqCorrect: examRecord.mcqData?.correct || 0
           }
         })
         
@@ -707,6 +788,17 @@ export default {
     async saveExamMarks() {
       try {
         log(`Saving marks for exam ${this.examToClose.id}`)
+        
+        // Check if all marks are filled
+        const studentsWithoutMarks = this.examStudentsForMarks.filter(student => 
+          student.mark === null || student.mark === undefined || student.mark === ''
+        )
+        
+        if (studentsWithoutMarks.length > 0) {
+          this.showToast(`Please fill marks for all students. ${studentsWithoutMarks.length} students missing marks.`, 'error')
+          return
+        }
+        
         this.savingMarks = true
         
         // Update exam with marks
@@ -716,14 +808,19 @@ export default {
           if (student.mark !== null && student.mark !== undefined) {
             updatedStudentRecords[student.indexNo] = {
               ...updatedStudentRecords[student.indexNo],
-              mark: student.mark
+              mark: student.mark,
+              mcqData: this.showMcqAssist ? {
+                total: this.totalMcqQuestions,
+                correct: student.mcqCorrect || 0
+              } : null
             }
             
             // Update student's exam record
             studentService.addExamRecord(student.indexNo, this.examToClose.id, {
               fee: student.fee,
               mark: student.mark,
-              examDate: this.examToClose.date
+              examDate: this.examToClose.date,
+              status: CONSTANTS.STUDENT_EXAM_STATUS.PRESENT
             })
           }
         })
@@ -770,6 +867,45 @@ export default {
       this.showMarksModal = false
       this.examToClose = null
       this.examStudentsForMarks = []
+      this.showMcqAssist = false
+      this.totalMcqQuestions = 0
+    },
+    
+    toggleMcqAssist() {
+      this.showMcqAssist = !this.showMcqAssist
+      if (!this.showMcqAssist) {
+        this.totalMcqQuestions = 0
+        this.examStudentsForMarks.forEach(student => {
+          student.mcqCorrect = 0
+          student.mark = null
+        })
+      }
+    },
+    
+    validateAndCalculateMcq(student) {
+      // Validate MCQ input
+      if (student.mcqCorrect > this.totalMcqQuestions) {
+        student.mcqCorrect = this.totalMcqQuestions
+      }
+      if (student.mcqCorrect < 0) {
+        student.mcqCorrect = 0
+      }
+      
+      // Calculate mark
+      if (this.totalMcqQuestions > 0 && student.mcqCorrect !== null && student.mcqCorrect !== undefined) {
+        student.mark = Math.round((student.mcqCorrect / this.totalMcqQuestions) * 100)
+      }
+    },
+    
+    getMarkColor(mark) {
+      if (mark === null || mark === undefined) return '#6c757d'
+      
+      if (mark >= 0 && mark < 25) return CONSTANTS.MARK_RANGES.RED.color
+      if (mark >= 25 && mark < 50) return CONSTANTS.MARK_RANGES.ORANGE.color
+      if (mark >= 50 && mark < 75) return CONSTANTS.MARK_RANGES.YELLOW.color
+      if (mark >= 75 && mark <= 100) return CONSTANTS.MARK_RANGES.GREEN.color
+      
+      return '#6c757d'
     },
     
     updateMarks(exam) {
@@ -1186,6 +1322,94 @@ input:checked + .slider:before {
   font-size: 12px;
 }
 
+.fee-input-group {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.btn-warning {
+  background: linear-gradient(135deg, #ffc107 0%, #e0a800 100%);
+  color: #212529;
+  border: none;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.btn-warning:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(255, 193, 7, 0.3);
+}
+
+/* MCQ Assist Styles */
+.mcq-assist-section {
+  margin-bottom: 20px;
+  padding: 16px;
+  background: #f8f9fa;
+  border-radius: 8px;
+  border: 1px solid #e9ecef;
+}
+
+.mcq-assist-form {
+  margin-top: 12px;
+}
+
+.mcq-assist-form .form-group {
+  margin-bottom: 0;
+}
+
+.mcq-assist-form label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #495057;
+  margin-bottom: 4px;
+}
+
+.mcq-input {
+  width: 100%;
+  max-width: 60px;
+  padding: 6px 8px;
+  border: 2px solid #e9ecef;
+  border-radius: 4px;
+  font-size: 12px;
+  text-align: center;
+  transition: border-color 0.3s ease;
+}
+
+.mcq-input:focus {
+  outline: none;
+  border-color: #17a2b8;
+  box-shadow: 0 0 0 2px rgba(23, 162, 184, 0.1);
+}
+
+.mcq-input.error {
+  border-color: #dc3545;
+  background-color: #fff5f5;
+}
+
+.error-message {
+  font-size: 10px;
+  color: #dc3545;
+  margin-top: 2px;
+  text-align: center;
+}
+
+.grade-circle {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  margin: 0 auto;
+  border: 2px solid #fff;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
 .bottom-nav {
   position: fixed;
   bottom: 0;
@@ -1339,6 +1563,18 @@ input:checked + .slider:before {
   outline: none;
   border-color: #1e40af;
   box-shadow: 0 0 0 3px rgba(30, 64, 175, 0.1);
+}
+
+.mark-input.readonly {
+  background-color: #f8f9fa;
+  color: #6c757d;
+  cursor: not-allowed;
+  border-color: #dee2e6;
+}
+
+.mark-input.readonly:focus {
+  border-color: #dee2e6;
+  box-shadow: none;
 }
 
 /* Mobile Responsive */

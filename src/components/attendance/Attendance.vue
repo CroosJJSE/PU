@@ -133,6 +133,9 @@
                 <div v-if="student.attendance === CONSTANTS.ATTENDANCE_STATUS.PRESENT" class="status-badge present">
                   <i class="fas fa-check"></i>
                   Present
+                  <div v-if="student.attendanceTime" class="attendance-time">
+                    {{ formatTime(student.attendanceTime) }}
+                  </div>
                 </div>
                 <div v-else-if="student.attendance === CONSTANTS.ATTENDANCE_STATUS.ABSENT" class="status-badge absent">
                   <i class="fas fa-times"></i>
@@ -172,6 +175,10 @@
           <button @click="resetAttendance" class="btn btn-secondary">
             <i class="fas fa-undo"></i>
             Reset
+          </button>
+          <button @click="generateAttendancePDF" class="btn btn-info" :disabled="saving">
+            <i class="fas fa-file-pdf"></i>
+            Generate PDF
           </button>
           <button @click="saveAttendance" class="btn btn-primary" :disabled="saving">
             <span v-if="saving" class="spinner"></span>
@@ -215,6 +222,8 @@
 import { CONSTANTS, getTodayDate, formatDateForSystem } from '../../config/database.js'
 import { studentService, classAttendanceService, classService } from '../../services/firestore.js'
 import { log, logError, logSuccess, logWarning } from '../../config/database.js'
+import jsPDF from 'jspdf'
+import 'jspdf-autotable'
 
 export default {
   name: 'Attendance',
@@ -251,6 +260,11 @@ export default {
   
   async mounted() {
     await this.loadClasses()
+    this.loadPersistedState()
+  },
+  
+  beforeUnmount() {
+    this.savePersistedState()
   },
   
   methods: {
@@ -299,15 +313,19 @@ export default {
         }
         
         // Load existing attendance for the date
-        const existingAttendanceIds = await classAttendanceService.getByDateAndClass(this.selectedDate, this.selectedClass)
+        const existingAttendance = await classAttendanceService.getByDateAndClass(this.selectedDate, this.selectedClass)
+        const existingAttendanceIds = existingAttendance.studentIds || []
+        const existingAttendanceTimes = existingAttendance.studentTimes || {}
         log(`Found ${existingAttendanceIds.length} students already marked present`)
         
         // Merge student data with attendance data
         this.attendanceStudents = students.map(student => {
           const isPresent = existingAttendanceIds.includes(student.indexNo)
+          const attendanceTime = existingAttendanceTimes[student.indexNo]?.time
           return {
             ...student,
-            attendance: isPresent ? CONSTANTS.ATTENDANCE_STATUS.PRESENT : null
+            attendance: isPresent ? CONSTANTS.ATTENDANCE_STATUS.PRESENT : null,
+            attendanceTime: attendanceTime
           }
         })
         
@@ -326,6 +344,12 @@ export default {
       const index = this.attendanceStudents.findIndex(s => s.id === student.id)
       if (index !== -1) {
         this.attendanceStudents[index].attendance = status
+        if (status === CONSTANTS.ATTENDANCE_STATUS.PRESENT) {
+          this.attendanceStudents[index].attendanceTime = new Date().toISOString()
+        } else {
+          this.attendanceStudents[index].attendanceTime = null
+        }
+        log(`Marked ${student.name} as ${status} at ${this.attendanceStudents[index].attendanceTime || 'N/A'}`)
       }
     },
     
@@ -402,18 +426,30 @@ export default {
         log(`Saving attendance for class ${this.selectedClass} on ${this.selectedDate}`)
         this.saving = true
         
-        // Get list of present student IDs
-        const presentStudentIds = this.attendanceStudents
+        // Get list of present student IDs and their times
+        const presentStudents = this.attendanceStudents
           .filter(student => student.attendance === CONSTANTS.ATTENDANCE_STATUS.PRESENT)
-          .map(student => student.indexNo)
+        
+        const presentStudentIds = presentStudents.map(student => student.indexNo)
+        const studentTimes = {}
+        
+        presentStudents.forEach(student => {
+          if (student.attendanceTime) {
+            studentTimes[student.indexNo] = {
+              time: student.attendanceTime,
+              status: 'present'
+            }
+          }
+        })
         
         log(`Saving attendance: ${presentStudentIds.length} students present out of ${this.attendanceStudents.length}`)
         
-        // Save attendance using new database structure
+        // Save attendance using new database structure with time tracking
         await classAttendanceService.saveAttendance(
           this.selectedClass, 
           formatDateForSystem(this.selectedDate), 
-          presentStudentIds
+          presentStudentIds,
+          studentTimes
         )
         
         logSuccess(`Attendance saved successfully for class ${this.selectedClass}`)
@@ -439,6 +475,161 @@ export default {
         month: 'short',
         year: 'numeric'
       })
+    },
+    
+    formatTime(timeString) {
+      if (!timeString) return ''
+      return new Date(timeString).toLocaleTimeString('en-GB', {
+        hour: '2-digit',
+        minute: '2-digit'
+      })
+    },
+    
+    generateAttendancePDF() {
+      try {
+        log('Generating attendance PDF')
+        
+        // Get class details
+        const selectedClassData = this.classes.find(cls => cls.classId === this.selectedClass)
+        if (!selectedClassData) {
+          this.showToast('Class information not found', 'error')
+          return
+        }
+        
+        // Create PDF
+        const doc = new jsPDF()
+        
+        // Add header with logo and title
+        doc.setFontSize(20)
+        doc.setTextColor(30, 64, 175) // Blue color
+        doc.text('Pesalai Undergraduates', 20, 30)
+        
+        doc.setFontSize(12)
+        doc.setTextColor(100, 100, 100)
+        doc.text('Choose harder rights, not easier wrongs', 20, 40)
+        
+        // Add class and date info
+        doc.setFontSize(16)
+        doc.setTextColor(0, 0, 0)
+        doc.text(`Class Attendance Report`, 20, 55)
+        
+        doc.setFontSize(12)
+        doc.text(`Class: ${selectedClassData.subject} - ${selectedClassData.batch}`, 20, 65)
+        doc.text(`Date: ${this.formatDate(this.selectedDate)}`, 20, 75)
+        
+        // Prepare table data
+        const tableData = this.attendanceStudents.map(student => {
+          const status = student.attendance === CONSTANTS.ATTENDANCE_STATUS.PRESENT ? 'Present' : 'Absent'
+          const time = student.attendanceTime ? this.formatTime(student.attendanceTime) : ''
+          return [
+            student.indexNo,
+            student.name,
+            time,
+            status
+          ]
+        })
+        
+        // Add table
+        doc.autoTable({
+          head: [['Index No', 'Name', 'Time', 'Status']],
+          body: tableData,
+          startY: 85,
+          theme: 'grid',
+          headStyles: {
+            fillColor: [30, 64, 175], // Blue header
+            textColor: [255, 255, 255],
+            fontSize: 12,
+            fontStyle: 'bold'
+          },
+          bodyStyles: {
+            fontSize: 10
+          },
+          alternateRowStyles: {
+            fillColor: [248, 249, 250] // Light gray for alternate rows
+          },
+          columnStyles: {
+            0: { cellWidth: 25 }, // Index No
+            1: { cellWidth: 60 }, // Name
+            2: { cellWidth: 25 }, // Time
+            3: { cellWidth: 30 }  // Status
+          },
+          didDrawCell: (data) => {
+            // Color code the status column
+            if (data.column.index === 3) {
+              const status = data.cell.raw[3]
+              if (status === 'Present') {
+                doc.setTextColor(40, 167, 69) // Green
+              } else {
+                doc.setTextColor(220, 53, 69) // Red
+              }
+            }
+          }
+        })
+        
+        // Add summary
+        const finalY = doc.lastAutoTable.finalY + 20
+        doc.setFontSize(12)
+        doc.setTextColor(0, 0, 0)
+        doc.text(`Summary: ${this.presentCount} Present, ${this.absentCount} Absent (${this.attendancePercentage}%)`, 20, finalY)
+        
+        // Save the PDF
+        const fileName = `Attendance_${selectedClassData.subject}_${selectedClassData.batch}_${this.selectedDate}.pdf`
+        doc.save(fileName)
+        
+        logSuccess(`PDF generated successfully: ${fileName}`)
+        this.showToast('PDF generated and downloaded', 'success')
+        
+      } catch (error) {
+        logError('Error generating PDF', error)
+        this.showToast('Failed to generate PDF', 'error')
+      }
+    },
+    
+    savePersistedState() {
+      try {
+        const state = {
+          selectedClass: this.selectedClass,
+          selectedDate: this.selectedDate,
+          attendanceLoaded: this.attendanceLoaded,
+          attendanceStudents: this.attendanceStudents.map(student => ({
+            id: student.id,
+            indexNo: student.indexNo,
+            name: student.name,
+            attendance: student.attendance,
+            attendanceTime: student.attendanceTime
+          }))
+        }
+        localStorage.setItem('attendance_state', JSON.stringify(state))
+        log('Attendance state persisted to localStorage')
+      } catch (error) {
+        logError('Error saving persisted state', error)
+      }
+    },
+    
+    loadPersistedState() {
+      try {
+        const savedState = localStorage.getItem('attendance_state')
+        if (savedState) {
+          const state = JSON.parse(savedState)
+          
+          // Only restore if we have valid data
+          if (state.selectedClass && state.selectedDate && state.attendanceStudents) {
+            this.selectedClass = state.selectedClass
+            this.selectedDate = state.selectedDate
+            this.attendanceLoaded = state.attendanceLoaded
+            
+            // Restore attendance students with their marks
+            if (state.attendanceStudents.length > 0) {
+              this.attendanceStudents = state.attendanceStudents
+              logSuccess(`Restored attendance state: ${state.attendanceStudents.length} students`)
+            }
+          }
+        }
+      } catch (error) {
+        logError('Error loading persisted state', error)
+        // Clear corrupted state
+        localStorage.removeItem('attendance_state')
+      }
     },
     
     showToast(message, type = 'success') {
@@ -705,6 +896,12 @@ export default {
   color: #721c24;
 }
 
+.attendance-time {
+  font-size: 10px;
+  margin-top: 2px;
+  opacity: 0.8;
+}
+
 .status-badge.pending {
   background: #fff3cd;
   color: #856404;
@@ -737,6 +934,26 @@ export default {
   gap: 12px;
   justify-content: center;
   margin-top: 24px;
+  flex-wrap: wrap;
+}
+
+.btn-info {
+  background: linear-gradient(135deg, #17a2b8 0%, #138496 100%);
+  color: white;
+  border: none;
+  padding: 12px 20px;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.btn-info:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(23, 162, 184, 0.3);
 }
 
 .action-buttons .btn {

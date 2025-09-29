@@ -72,12 +72,6 @@
           <div v-if="selectedExam" class="marks-section">
             <div class="section-header">
               <h3>Manage Marks - {{ selectedExam.subject }} ({{ selectedExam.batch }})</h3>
-              <div class="section-actions">
-                <button @click="generateReport" class="btn btn-primary">
-                  <i class="fas fa-file-pdf"></i>
-                  Generate PDF Report
-                </button>
-              </div>
             </div>
             
             <div class="marks-table-container">
@@ -122,6 +116,14 @@
                   <span class="value">{{ attendedStudents.length }}</span>
                 </div>
                 <div class="stat-item">
+                  <span class="label">Present:</span>
+                  <span class="value">{{ presentCount }}</span>
+                </div>
+                <div class="stat-item">
+                  <span class="label">Absent:</span>
+                  <span class="value">{{ absentCount }}</span>
+                </div>
+                <div class="stat-item">
                   <span class="label">Average Mark:</span>
                   <span class="value">{{ averageMark }}%</span>
                 </div>
@@ -133,6 +135,21 @@
                   <span class="label">Pass Rate:</span>
                   <span class="value">{{ passRate }}%</span>
                 </div>
+              </div>
+            </div>
+            
+            <!-- PDF Generation Options -->
+            <div class="pdf-generation">
+              <h4>Generate PDF Report</h4>
+              <div class="pdf-options">
+                <button @click="generateMobilePDF" class="btn btn-primary">
+                  <i class="fas fa-mobile-alt"></i>
+                  Mobile View PDF
+                </button>
+                <button @click="generatePrintPDF" class="btn btn-secondary">
+                  <i class="fas fa-print"></i>
+                  Print Standard PDF
+                </button>
               </div>
             </div>
           </div>
@@ -197,23 +214,31 @@ export default {
     },
     
     averageMark() {
-      const validMarks = this.attendedStudents.filter(s => s.mark != null && s.mark !== '')
+      const validMarks = this.attendedStudents.filter(s => s.isPresent && s.mark != null && s.mark !== '' && s.mark !== 'Absent')
       if (validMarks.length === 0) return 0
       const sum = validMarks.reduce((total, student) => total + (student.mark || 0), 0)
       return Math.round(sum / validMarks.length)
     },
     
     highestMark() {
-      const validMarks = this.attendedStudents.filter(s => s.mark != null && s.mark !== '')
+      const validMarks = this.attendedStudents.filter(s => s.isPresent && s.mark != null && s.mark !== '' && s.mark !== 'Absent')
       if (validMarks.length === 0) return 0
       return Math.max(...validMarks.map(s => s.mark || 0))
     },
     
     passRate() {
-      const validMarks = this.attendedStudents.filter(s => s.mark != null && s.mark !== '')
+      const validMarks = this.attendedStudents.filter(s => s.isPresent && s.mark != null && s.mark !== '' && s.mark !== 'Absent')
       if (validMarks.length === 0) return 0
       const passedStudents = validMarks.filter(s => (s.mark || 0) >= 40)
       return Math.round((passedStudents.length / validMarks.length) * 100)
+    },
+    
+    presentCount() {
+      return this.attendedStudents.filter(s => s.isPresent).length
+    },
+    
+    absentCount() {
+      return this.attendedStudents.filter(s => !s.isPresent).length
     }
   },
   
@@ -263,19 +288,22 @@ export default {
         const attendedStudentIds = Object.keys(exam.studentRecords || {})
         log(`Found ${attendedStudentIds.length} students who attended the exam`)
         
-        // Get student details for attended students
-        this.attendedStudents = attendedStudentIds.map(studentId => {
+        // Get student details for all students (attended and absent)
+        const allStudentIds = Object.keys(exam.studentRecords)
+        this.attendedStudents = allStudentIds.map(studentId => {
           const student = this.students.find(s => s.indexNo === studentId)
           if (!student) return null
           
           // Get existing marks from exam studentRecords
           const examRecord = exam.studentRecords[studentId]
+          const isPresent = examRecord?.status === CONSTANTS.STUDENT_EXAM_STATUS.PRESENT
           
           return {
             ...student,
-            mark: examRecord?.mark || '',
-            grade: examRecord?.mark ? this.calculateGradeFromMark(examRecord.mark) : '',
-            examRecord: examRecord
+            mark: isPresent ? (examRecord?.mark || '') : 'Absent',
+            grade: isPresent ? (examRecord?.mark ? this.calculateGradeFromMark(examRecord.mark) : '') : 'Absent',
+            examRecord: examRecord,
+            isPresent: isPresent
           }
         }).filter(Boolean)
         
@@ -330,107 +358,219 @@ export default {
       return Object.keys(exam.studentRecords).length
     },
     
-    async generateReport() {
+    generateMobilePDF() {
       try {
-        if (!this.selectedExam || !this.hasMarks(this.selectedExam.id)) {
-          logWarning('Cannot generate report - no marks available')
-          this.showToast('Please add marks before generating report', 'error')
+        if (!this.selectedExam) {
+          this.showToast('Please select an exam first', 'error')
           return
         }
         
-        log(`Generating PDF report for exam ${this.selectedExam.subject}`)
+        log('Generating mobile PDF report')
         
         // Create PDF
         const doc = new jsPDF()
         
-        // Header
+        // Add header with logo and title
         doc.setFontSize(20)
-        doc.setFont(undefined, 'bold')
-        doc.text(CONSTANTS.APP_NAME, 105, 20, { align: 'center' })
+        doc.setTextColor(30, 64, 175) // Blue color
+        doc.text('Pesalai Undergraduates', 20, 30)
         
         doc.setFontSize(12)
-        doc.setFont(undefined, 'italic')
-        doc.text(CONSTANTS.APP_SLOGAN, 105, 30, { align: 'center' })
+        doc.setTextColor(100, 100, 100)
+        doc.text('Choose harder rights, not easier wrongs', 20, 40)
         
-        // Exam details
+        // Add exam info
         doc.setFontSize(16)
-        doc.setFont(undefined, 'bold')
-        doc.text(`${this.selectedExam.subject} - ${this.selectedExam.batch}`, 105, 45, { align: 'center' })
+        doc.setTextColor(0, 0, 0)
+        doc.text(`Exam Report - ${this.selectedExam.subject}`, 20, 55)
         
         doc.setFontSize(12)
-        doc.setFont(undefined, 'normal')
-        doc.text(`Exam Date: ${this.formatDate(this.selectedExam.date)}`, 105, 55, { align: 'center' })
+        doc.text(`Batch: ${this.selectedExam.batch}`, 20, 65)
+        doc.text(`Date: ${this.formatDate(this.selectedExam.date)}`, 20, 75)
+        doc.text(`Total Students: ${this.attendedStudents.length}`, 20, 85)
         
-        // Prepare table data from studentRecords
-        const tableData = Object.keys(this.selectedExam.studentRecords)
-          .map(studentId => {
-            const student = this.students.find(s => s.indexNo === studentId)
-            const record = this.selectedExam.studentRecords[studentId]
-            if (!student || !record.mark) return null
-            
-            return [
-              student.indexNo,
-              student.name,
-              record.mark,
-              this.calculateGradeFromMark(record.mark)
-            ]
-          })
-          .filter(Boolean)
+        // Sort students by marks (highest to lowest, absents at bottom)
+        const sortedStudents = [...this.attendedStudents].sort((a, b) => {
+          if (!a.isPresent && !b.isPresent) return 0
+          if (!a.isPresent) return 1
+          if (!b.isPresent) return -1
+          return (b.mark || 0) - (a.mark || 0)
+        })
         
-        log(`Generating report with ${tableData.length} student records`)
+        // Find highest marks
+        const presentStudents = sortedStudents.filter(s => s.isPresent)
+        const highestMark = presentStudents.length > 0 ? Math.max(...presentStudents.map(s => s.mark || 0)) : 0
+        
+        // Prepare table data with all information
+        const tableData = sortedStudents.map(student => {
+          const examRecord = this.selectedExam.studentRecords[student.indexNo]
+          
+          // Fee status with colors
+          let feeStatus = ''
+          if (student.isPresent) {
+            if (examRecord.fee === 0) {
+              feeStatus = 'Forgot'
+            } else if (examRecord.fee < this.selectedExam.fee) {
+              feeStatus = 'Partial'
+            } else {
+              feeStatus = 'Paid'
+            }
+          }
+          
+          // Marks with highest mark indicator
+          let marksDisplay = student.isPresent ? (student.mark || '-') : 'Absent'
+          if (student.isPresent && student.mark === highestMark && highestMark > 0) {
+            marksDisplay = `${student.mark} ✓`
+          }
+          
+          // Grade
+          const grade = student.isPresent ? this.calculateGradeFromMark(student.mark) : ''
+          
+          return [
+            student.indexNo,
+            student.name,
+            marksDisplay,
+            feeStatus,
+            grade
+          ]
+        })
         
         // Add table
         doc.autoTable({
-          head: [['Index No', 'Student Name', 'Marks', 'Grade']],
+          head: [['Index No', 'Name', 'Marks', 'Fee Status', 'Grade']],
           body: tableData,
-          startY: 70,
-          theme: 'striped',
+          startY: 95,
+          theme: 'grid',
           headStyles: {
-            fillColor: [102, 126, 234],
-            textColor: 255,
+            fillColor: [30, 64, 175],
+            textColor: [255, 255, 255],
+            fontSize: 10,
             fontStyle: 'bold'
           },
-          styles: {
-            fontSize: 10,
-            cellPadding: 5
+          bodyStyles: {
+            fontSize: 9
           },
           columnStyles: {
             0: { cellWidth: 25 },
-            1: { cellWidth: 80 },
-            2: { cellWidth: 25, halign: 'center' },
-            3: { cellWidth: 25, halign: 'center' }
+            1: { cellWidth: 50 },
+            2: { cellWidth: 30 },
+            3: { cellWidth: 30 },
+            4: { cellWidth: 20 }
           }
         })
         
         // Add summary
         const finalY = doc.lastAutoTable.finalY + 20
         doc.setFontSize(12)
-        doc.setFont(undefined, 'bold')
-        doc.text('Summary:', 20, finalY)
+        doc.text(`Summary: Average ${this.averageMark}%, Highest ${this.highestMark}%, Pass Rate ${this.passRate}%`, 20, finalY)
         
-        doc.setFont(undefined, 'normal')
-        doc.text(`Total Students: ${this.attendedStudents.length}`, 20, finalY + 10)
-        doc.text(`Average Mark: ${this.averageMark}%`, 20, finalY + 20)
-        doc.text(`Highest Mark: ${this.highestMark}%`, 20, finalY + 30)
-        doc.text(`Pass Rate: ${this.passRate}%`, 20, finalY + 40)
-        
-        // Add footer
-        doc.setFontSize(8)
-        doc.text(`Generated on: ${new Date().toLocaleDateString('en-GB')}`, 20, 280)
-        doc.text('Pesalai Undergraduates Admin System', 105, 280, { align: 'center' })
-        
-        // Save PDF
-        const fileName = `${this.selectedExam.subject}_${this.selectedExam.batch}_${this.selectedExam.date}.pdf`
+        // Save the PDF
+        const fileName = `Mobile_Report_${this.selectedExam.subject}_${this.selectedExam.batch}_${this.selectedExam.date}.pdf`
         doc.save(fileName)
         
-        logSuccess(`PDF report generated successfully: ${fileName}`)
-        this.showToast('Report generated successfully', 'success')
+        logSuccess(`Mobile PDF generated: ${fileName}`)
+        this.showToast('Mobile PDF generated and downloaded', 'success')
         
       } catch (error) {
-        logError('Error generating report', error)
-        this.showToast('Failed to generate report', 'error')
+        logError('Error generating mobile PDF', error)
+        this.showToast('Failed to generate mobile PDF', 'error')
       }
     },
+    
+    generatePrintPDF() {
+      try {
+        if (!this.selectedExam) {
+          this.showToast('Please select an exam first', 'error')
+          return
+        }
+        
+        log('Generating print PDF report')
+        
+        // Create PDF
+        const doc = new jsPDF()
+        
+        // Add header
+        doc.setFontSize(18)
+        doc.setTextColor(30, 64, 175)
+        doc.text('Pesalai Undergraduates', 20, 30)
+        
+        doc.setFontSize(10)
+        doc.setTextColor(100, 100, 100)
+        doc.text('Choose harder rights, not easier wrongs', 20, 40)
+        
+        // Add exam info
+        doc.setFontSize(14)
+        doc.setTextColor(0, 0, 0)
+        doc.text(`${this.selectedExam.subject} - ${this.selectedExam.batch}`, 20, 55)
+        doc.text(`Date: ${this.formatDate(this.selectedExam.date)}`, 20, 65)
+        
+        // Sort students by marks (highest to lowest, absents at bottom)
+        const sortedStudents = [...this.attendedStudents].sort((a, b) => {
+          if (!a.isPresent && !b.isPresent) return 0
+          if (!a.isPresent) return 1
+          if (!b.isPresent) return -1
+          return (b.mark || 0) - (a.mark || 0)
+        })
+        
+        // Find highest marks and students who got them
+        const presentStudents = sortedStudents.filter(s => s.isPresent)
+        const highestMark = presentStudents.length > 0 ? Math.max(...presentStudents.map(s => s.mark || 0)) : 0
+        const highestMarkStudents = presentStudents.filter(s => s.mark === highestMark && highestMark > 0)
+        
+        // Prepare simple table data (index, marks, and grade)
+        const tableData = sortedStudents.map(student => [
+          student.indexNo,
+          student.isPresent ? (student.mark || '-') : 'Absent',
+          student.isPresent ? this.calculateGradeFromMark(student.mark) : ''
+        ])
+        
+        // Add table
+        doc.autoTable({
+          head: [['Index No', 'Marks', 'Grade']],
+          body: tableData,
+          startY: 75,
+          theme: 'grid',
+          headStyles: {
+            fillColor: [30, 64, 175],
+            textColor: [255, 255, 255],
+            fontSize: 12,
+            fontStyle: 'bold'
+          },
+          bodyStyles: {
+            fontSize: 11
+          },
+          columnStyles: {
+            0: { cellWidth: 50 },
+            1: { cellWidth: 30 },
+            2: { cellWidth: 20 }
+          }
+        })
+        
+        // Add highest marks section
+        const finalY = doc.lastAutoTable.finalY + 20
+        if (highestMarkStudents.length > 0) {
+          doc.setFontSize(12)
+          doc.setFont(undefined, 'bold')
+          doc.text('Highest Marks:', 20, finalY)
+          
+          doc.setFont(undefined, 'normal')
+          const studentNames = highestMarkStudents.map(s => s.name).join(', ')
+          doc.text(`${studentNames} - ${highestMark}%`, 20, finalY + 10)
+        }
+        
+        // Save the PDF
+        const fileName = `Print_Report_${this.selectedExam.subject}_${this.selectedExam.batch}_${this.selectedExam.date}.pdf`
+        doc.save(fileName)
+        
+        logSuccess(`Print PDF generated: ${fileName}`)
+        this.showToast('Print PDF generated and downloaded', 'success')
+        
+      } catch (error) {
+        logError('Error generating print PDF', error)
+        this.showToast('Failed to generate print PDF', 'error')
+      }
+    },
+    
     
     formatDate(dateString) {
       return new Date(dateString).toLocaleDateString('en-GB', {
@@ -633,6 +773,44 @@ export default {
   text-align: center;
   padding: 40px;
   color: #6c757d;
+}
+
+.pdf-generation {
+  margin-top: 24px;
+  padding: 20px;
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+}
+
+.pdf-generation h4 {
+  margin-bottom: 16px;
+  color: #2c3e50;
+  font-size: 18px;
+}
+
+.pdf-options {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.pdf-options .btn {
+  flex: 1;
+  min-width: 150px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 16px;
+  font-weight: 600;
+  border-radius: 8px;
+  transition: all 0.3s ease;
+}
+
+.pdf-options .btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
 }
 
 .marks-table {
