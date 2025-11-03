@@ -72,6 +72,22 @@
           <div v-if="selectedExam" class="marks-section">
             <div class="section-header">
               <h3>Manage Marks - {{ selectedExam.subject }} ({{ selectedExam.batch }})</h3>
+              <div class="section-actions">
+                <button @click="toggleEditMode" class="btn btn-primary" v-if="!editMode">
+                  <i class="fas fa-edit"></i>
+                  Edit Marks
+                </button>
+                <div v-if="editMode" class="edit-actions">
+                  <button @click="saveMarks" class="btn btn-success" :disabled="saving">
+                    <i class="fas fa-save"></i>
+                    Save Changes
+                  </button>
+                  <button @click="cancelEdit" class="btn btn-secondary">
+                    <i class="fas fa-times"></i>
+                    Cancel
+                  </button>
+                </div>
+              </div>
             </div>
             
             <div class="marks-table-container">
@@ -96,7 +112,16 @@
                     <div class="table-cell">{{ student.indexNo }}</div>
                     <div class="table-cell">{{ student.name }}</div>
                     <div class="table-cell">
-                      <span class="mark-display">{{ student.mark || '-' }}</span>
+                      <input 
+                        v-if="editMode && student.isPresent" 
+                        v-model.number="student.mark" 
+                        type="number" 
+                        class="mark-input"
+                        min="0" 
+                        max="100"
+                        @input="updateGrade(student)"
+                      />
+                      <span v-else class="mark-display">{{ student.mark || '-' }}</span>
                     </div>
                     <div class="table-cell">
                       <span class="grade-badge" :class="getGradeClass(student.grade)">
@@ -204,13 +229,18 @@ export default {
       students: [],
       selectedExam: null,
       attendedStudents: [],
-      loading: true
+      loading: true,
+      editMode: false,
+      saving: false,
+      originalMarks: {}
     }
   },
   
   computed: {
     completedExams() {
-      return this.exams.filter(exam => exam.status === CONSTANTS.EXAM_STATUS.COMPLETED)
+      return this.exams
+        .filter(exam => exam.status === CONSTANTS.EXAM_STATUS.COMPLETED)
+        .sort((a, b) => new Date(b.date) - new Date(a.date)) // Latest first
     },
     
     averageMark() {
@@ -229,7 +259,7 @@ export default {
     passRate() {
       const validMarks = this.attendedStudents.filter(s => s.isPresent && s.mark != null && s.mark !== '' && s.mark !== 'Absent')
       if (validMarks.length === 0) return 0
-      const passedStudents = validMarks.filter(s => (s.mark || 0) >= 40)
+      const passedStudents = validMarks.filter(s => (s.mark || 0) >= 36) // S, C, B, A are passing (36+)
       return Math.round((passedStudents.length / validMarks.length) * 100)
     },
     
@@ -327,10 +357,10 @@ export default {
     },
     
     calculateGradeFromMark(mark) {
-      if (mark >= 75) return 'A'
-      if (mark >= 65) return 'B'
-      if (mark >= 55) return 'C'
-      if (mark >= 40) return 'S'
+      if (mark >= 76) return 'A'
+      if (mark >= 66) return 'B'
+      if (mark >= 56) return 'C'
+      if (mark >= 36) return 'S'
       return 'F'
     },
     
@@ -342,6 +372,74 @@ export default {
         case 'S': return 'grade-s'
         case 'F': return 'grade-f'
         default: return ''
+      }
+    },
+    
+    toggleEditMode() {
+      this.editMode = !this.editMode
+      if (this.editMode) {
+        // Store original marks for cancel functionality
+        this.originalMarks = {}
+        this.attendedStudents.forEach(student => {
+          if (student.isPresent) {
+            this.originalMarks[student.indexNo] = student.mark
+          }
+        })
+        log('Entered edit mode for marks')
+      } else {
+        this.originalMarks = {}
+        log('Exited edit mode')
+      }
+    },
+    
+    cancelEdit() {
+      // Restore original marks
+      this.attendedStudents.forEach(student => {
+        if (student.isPresent && this.originalMarks[student.indexNo] !== undefined) {
+          student.mark = this.originalMarks[student.indexNo]
+          student.grade = this.calculateGradeFromMark(student.mark)
+        }
+      })
+      this.editMode = false
+      this.originalMarks = {}
+      log('Cancelled mark edits')
+    },
+    
+    async saveMarks() {
+      try {
+        this.saving = true
+        log('Saving updated marks')
+        
+        // Update marks in the exam document
+        const updatedStudentRecords = { ...this.selectedExam.studentRecords }
+        
+        this.attendedStudents.forEach(student => {
+          if (student.isPresent && student.mark !== null && student.mark !== undefined) {
+            if (updatedStudentRecords[student.indexNo]) {
+              updatedStudentRecords[student.indexNo].mark = student.mark
+            }
+          }
+        })
+        
+        // Update the exam document
+        await examService.update(this.selectedExam.id, {
+          studentRecords: updatedStudentRecords
+        })
+        
+        // Update the selected exam object
+        this.selectedExam.studentRecords = updatedStudentRecords
+        
+        this.editMode = false
+        this.originalMarks = {}
+        
+        logSuccess('Marks updated successfully')
+        this.showToast('Marks updated successfully', 'success')
+        
+      } catch (error) {
+        logError('Error saving marks', error)
+        this.showToast('Failed to save marks', 'error')
+      } finally {
+        this.saving = false
       }
     },
     
@@ -417,11 +515,8 @@ export default {
             }
           }
           
-          // Marks with highest mark indicator
+          // Marks display (just the marks, no special formatting)
           let marksDisplay = student.isPresent ? (student.mark || '-') : 'Absent'
-          if (student.isPresent && student.mark === highestMark && highestMark > 0) {
-            marksDisplay = `${student.mark} ✓`
-          }
           
           // Grade
           const grade = student.isPresent ? this.calculateGradeFromMark(student.mark) : ''
@@ -462,7 +557,7 @@ export default {
         // Add summary
         const finalY = doc.lastAutoTable.finalY + 20
         doc.setFontSize(12)
-        doc.text(`Summary: Average ${this.averageMark}%, Highest ${this.highestMark}%, Pass Rate ${this.passRate}%`, 20, finalY)
+        doc.text(`Summary: Average ${this.averageMark}%, Highest ${highestMark}%, Pass Rate ${this.passRate}%`, 20, finalY)
         
         // Save the PDF
         const fileName = `Mobile_Report_${this.selectedExam.subject}_${this.selectedExam.batch}_${this.selectedExam.date}.pdf`
@@ -765,6 +860,12 @@ export default {
   gap: 12px;
 }
 
+.edit-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
 .marks-table-container {
   padding: 20px;
 }
@@ -872,6 +973,22 @@ export default {
   text-align: center;
 }
 
+.mark-input {
+  width: 80px;
+  padding: 6px 8px;
+  border: 2px solid #e9ecef;
+  border-radius: 4px;
+  font-size: 14px;
+  text-align: center;
+  transition: border-color 0.3s ease;
+}
+
+.mark-input:focus {
+  outline: none;
+  border-color: #1e40af;
+  box-shadow: 0 0 0 3px rgba(30, 64, 175, 0.1);
+}
+
 .grade-badge {
   display: inline-block;
   padding: 4px 8px;
@@ -888,23 +1005,23 @@ export default {
 }
 
 .grade-b {
-  background: #d1ecf1;
-  color: #0c5460;
+  background: #17a2b8;
+  color: white;
 }
 
 .grade-c {
-  background: #fff3cd;
-  color: #856404;
+  background: #ffc107;
+  color: #212529;
 }
 
 .grade-s {
-  background: #f8d7da;
-  color: #721c24;
+  background: #fd7e14;
+  color: white;
 }
 
 .grade-f {
-  background: #f5c6cb;
-  color: #721c24;
+  background: #dc3545;
+  color: white;
 }
 
 .marks-summary {
@@ -1018,10 +1135,6 @@ export default {
 }
 
 @media (min-width: 768px) {
-  .bottom-nav {
-    display: none;
-  }
-  
   .reports-page {
     padding-bottom: 0;
   }

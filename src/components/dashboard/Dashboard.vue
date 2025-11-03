@@ -4,7 +4,7 @@
     <nav class="navbar">
       <div class="container-fluid">
         <router-link to="/dashboard" class="navbar-brand">
-          <img src="/logo.svg" alt="Logo" class="navbar-logo" />
+          <img src="/logo.jpg" alt="Logo" class="navbar-logo" />
           {{ CONSTANTS.APP_NAME }}
         </router-link>
         <button @click="logout" class="btn btn-sm btn-secondary">

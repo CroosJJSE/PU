@@ -129,6 +129,14 @@ export const CONSTANTS = {
     GREEN: { min: 75, max: 100, color: '#28a745' }
   },
   
+  GRADE_RANGES: {
+    F: { min: 0, max: 35, color: '#dc3545' },
+    S: { min: 36, max: 55, color: '#fd7e14' },
+    C: { min: 56, max: 65, color: '#ffc107' },
+    B: { min: 66, max: 75, color: '#17a2b8' },
+    A: { min: 76, max: 100, color: '#28a745' }
+  },
+  
   EXPENSE_TYPES: {
     INCOME: 'income',
     EXPENSE: 'expense'
@@ -205,4 +213,20 @@ export const logSuccess = (message, data = null) => {
 
 export const logWarning = (message, data = null) => {
   log(message, data, 'warning')
+}
+
+// Grade calculation function
+export const calculateGradeFromMark = (mark) => {
+  if (mark == null || mark === '') return ''
+  
+  const numMark = Number(mark)
+  if (isNaN(numMark)) return ''
+  
+  for (const [grade, range] of Object.entries(CONSTANTS.GRADE_RANGES)) {
+    if (numMark >= range.min && numMark <= range.max) {
+      return grade
+    }
+  }
+  
+  return 'F' // Default fallback
 }

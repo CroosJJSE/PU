@@ -2,7 +2,7 @@
   <div class="login-container">
     <div class="login-card">
       <div class="login-header">
-        <img src="/logo.svg" alt="Pesalai Undergraduates" class="logo" />
+        <img src="/logo.jpg" alt="Pesalai Undergraduates" class="logo" />
         <h1>{{ CONSTANTS.APP_NAME }}</h1>
         <p class="slogan">{{ CONSTANTS.APP_SLOGAN }}</p>
       </div>
